@@ -7,17 +7,18 @@ type BackendChoice = "none" | "cpu" | "gpu";
 
 type Settings = {
   projectRoot: string;
-  checkCommandTemplate: string;
   runCommandTemplate: string;
   uploadInstallCommandTemplate: string;
   uploadReleaseCommandTemplate: string;
+  arguments: ArgumentDefinition[];
 };
 
 let extensionTerminal: vscode.Terminal | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
+  warnAboutLegacySettings();
+
   context.subscriptions.push(
-    vscode.commands.registerCommand("mlTorrent.check", runCheckFlow),
     vscode.commands.registerCommand("mlTorrent.run", runRunFlow),
     vscode.commands.registerCommand("mlTorrent.upload", runUploadFlow),
     vscode.window.onDidCloseTerminal((terminal) => {
@@ -28,7 +29,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const statusBarItems = [
-    createStatusBarItem("$(check) Check", "mlTorrent.check", 103),
     createStatusBarItem("$(play) Run", "mlTorrent.run", 102),
     createStatusBarItem("$(cloud-upload) Upload", "mlTorrent.upload", 101)
   ];
@@ -51,6 +51,17 @@ export function deactivate(): void {
   extensionTerminal = undefined;
 }
 
+function warnAboutLegacySettings(): void {
+  const legacyValue = vscode.workspace.getConfiguration("mlTorrent").get("variableDefaults");
+  if (legacyValue === undefined) {
+    return;
+  }
+
+  void vscode.window.showWarningMessage(
+    "ML-Torrent: `mlTorrent.variableDefaults` is deprecated and ignored. Keep defaults only in `mlTorrent.arguments`."
+  );
+}
+
 function createStatusBarItem(
   text: string,
   command: string,
@@ -63,77 +74,47 @@ function createStatusBarItem(
   return item;
 }
 
-async function runCheckFlow(): Promise<void> {
-  const project = await loadProjectContext();
-  if (!project) {
-    return;
-  }
-
-  const crates = await getWorkspaceCrates(project.projectRoot);
-  if (crates.length === 0) {
-    void vscode.window.showErrorMessage("No Cargo workspace crates were found in the configured project root.");
-    return;
-  }
-
-  const crate = await vscode.window.showQuickPick(crates, {
-    placeHolder: "Select the crate to check",
-    title: "ML-Torrent Check"
-  });
-
-  if (!crate) {
-    return;
-  }
-
-  const command = interpolate(project.settings.checkCommandTemplate, {
-    crate: shellEscape(crate)
-  });
-
-  executeInTerminal(project.projectRoot, command, `Check: ${crate}`);
-}
-
 async function runRunFlow(): Promise<void> {
   const project = await loadProjectContext();
   if (!project) {
     return;
   }
 
-  const peersInput = await vscode.window.showInputBox({
-    prompt: "How many peers should run in the network?",
-    placeHolder: "0-100",
-    title: "ML-Torrent Run",
-    validateInput: (value) => validatePeerCount(value)
-  });
+  let backendSelection: BackendSelection | undefined;
+  const backendArgument = findArgument(project.settings.arguments, "backend");
+  const backendFlagArgument = findArgument(project.settings.arguments, "backendFlag");
+  const backendDefault =
+    backendArgument?.defaultValue
+    ?? backendChoiceFromFlag(backendFlagArgument?.defaultValue);
+  const getBackendSelection = async (): Promise<BackendSelection | undefined> => {
+    if (backendSelection) {
+      return backendSelection;
+    }
+    backendSelection = await selectBackend(backendArgument, backendDefault);
+    return backendSelection;
+  };
 
-  if (peersInput === undefined) {
-    return;
-  }
-
-  const backend = await vscode.window.showQuickPick<{
-    label: string;
-    value: BackendChoice;
-    description: string;
-  }>(
-    [
-      { label: "none", value: "none", description: "Maps to -t for simulated training" },
-      { label: "cpu", value: "cpu", description: "Maps to --cpu" },
-      { label: "gpu", value: "gpu", description: "Maps to --gpu" }
-    ],
+  const command = await resolveCommandTemplate(
+    "ML-Torrent Run",
+    project.settings.runCommandTemplate,
+    project.settings.arguments,
     {
-      placeHolder: "Select the backend mode",
-      title: "ML-Torrent Run"
+      peers: async (argument) => promptPeerCount(argument?.defaultValue),
+      backend: async (argument) => {
+        const selection = await getBackendSelection();
+        if (!selection) {
+          return undefined;
+        }
+        return formatBackendValue(argument, selection.value);
+      },
+      backendFlag: async () => (await getBackendSelection())?.flag
     }
   );
-
-  if (!backend) {
+  if (!command) {
     return;
   }
 
-  const command = interpolate(project.settings.runCommandTemplate, {
-    peers: peersInput,
-    backendFlag: backendFlagFor(backend.value)
-  });
-
-  executeInTerminal(project.projectRoot, command.trim(), `Run: ${peersInput} peers, ${backend.value}`);
+  executeInTerminal(project.projectRoot, command.trim(), "Run");
 }
 
 async function runUploadFlow(): Promise<void> {
@@ -142,17 +123,9 @@ async function runUploadFlow(): Promise<void> {
     return;
   }
 
-  const action = await vscode.window.showQuickPick<
-    { label: string; value: "install" | "upload"; description: string }
-  >(
-    [
-      { label: "install", value: "install", description: "Build and install on a connected mobile device" },
-      { label: "upload", value: "upload", description: "Build and publish an OTA release" }
-    ],
-    {
-      placeHolder: "Select the upload action",
-      title: "ML-Torrent Upload"
-    }
+  const action = await selectUploadAction(
+    findArgument(project.settings.arguments, "uploadAction")?.defaultValue
+    ?? findArgument(project.settings.arguments, "uploadMode")?.defaultValue
   );
 
   if (!action) {
@@ -160,27 +133,36 @@ async function runUploadFlow(): Promise<void> {
   }
 
   if (action.value === "install") {
-    executeInTerminal(
-      project.projectRoot,
+    const command = await resolveCommandTemplate(
+      "ML-Torrent Upload",
       project.settings.uploadInstallCommandTemplate,
-      "Upload: install"
+      project.settings.arguments
     );
+    if (!command) {
+      return;
+    }
+
+    executeInTerminal(project.projectRoot, command, "Upload: install");
     return;
   }
 
-  const releaseNotes = await vscode.window.showInputBox({
-    prompt: "Release notes / commit message for the uploaded build",
-    title: "ML-Torrent Upload",
-    validateInput: (value) => value.trim().length > 0 ? undefined : "Release notes are required."
-  });
-
-  if (releaseNotes === undefined) {
+  const command = await resolveCommandTemplate(
+    "ML-Torrent Upload",
+    project.settings.uploadReleaseCommandTemplate,
+    project.settings.arguments,
+    {
+      releaseNotes: async (argument) => {
+        const releaseNotes = await promptReleaseNotes(argument?.defaultValue);
+        if (releaseNotes === undefined) {
+          return undefined;
+        }
+        return formatArgumentValue(argument, releaseNotes);
+      }
+    }
+  );
+  if (!command) {
     return;
   }
-
-  const command = interpolate(project.settings.uploadReleaseCommandTemplate, {
-    releaseNotes: shellEscape(releaseNotes.trim())
-  });
 
   executeInTerminal(project.projectRoot, command, "Upload: publish");
 }
@@ -215,8 +197,7 @@ function readSettings(): Settings {
   const config = vscode.workspace.getConfiguration("mlTorrent");
   return {
     projectRoot: config.get<string>("projectRoot", "../dfl"),
-    checkCommandTemplate: config.get<string>("checkCommandTemplate", "cargo check -p ${crate}"),
-    runCommandTemplate: config.get<string>("runCommandTemplate", "./run.sh ${peers} ${backendFlag}"),
+    runCommandTemplate: config.get<string>("runCommandTemplate", "./run.sh ${peers} ${backend}"),
     uploadInstallCommandTemplate: config.get<string>(
       "uploadInstallCommandTemplate",
       "cd \"gui/ML-Torrent App\" && ./mobile-app.sh install"
@@ -224,38 +205,14 @@ function readSettings(): Settings {
     uploadReleaseCommandTemplate: config.get<string>(
       "uploadReleaseCommandTemplate",
       "cd \"gui/ML-Torrent App\" && ./release.sh ${releaseNotes}"
-    )
+    ),
+    arguments: normalizeArguments(config.get<ArgumentDefinition[]>("arguments", [
+      { name: "peers", prefix: "", defaultValue: "2" },
+      { name: "backend", prefix: "--", defaultValue: "gpu", choices: ["none", "cpu", "gpu"] },
+      { name: "releaseNotes", prefix: "", defaultValue: "Test build" },
+      { name: "uploadAction", prefix: "", defaultValue: "install", choices: ["install", "upload"] }
+    ]))
   };
-}
-
-async function getWorkspaceCrates(projectRoot: string): Promise<string[]> {
-  const metadata = await execJson<CargoMetadata>(
-    "cargo",
-    ["metadata", "--format-version", "1", "--no-deps"],
-    projectRoot
-  ).catch((error: Error) => {
-    void vscode.window.showErrorMessage(`Failed to load Cargo workspace metadata: ${error.message}`);
-    return undefined;
-  });
-
-  if (!metadata) {
-    return [];
-  }
-
-  const rootPrefix = ensureTrailingSeparator(path.resolve(projectRoot));
-  return metadata.packages
-    .filter((pkg) => metadata.workspace_members.includes(pkg.id))
-    .filter((pkg) => normalizeForCompare(pkg.manifest_path).startsWith(normalizeForCompare(rootPrefix)))
-    .map((pkg) => pkg.name)
-    .sort((left, right) => left.localeCompare(right));
-}
-
-function ensureTrailingSeparator(input: string): string {
-  return input.endsWith(path.sep) ? input : `${input}${path.sep}`;
-}
-
-function normalizeForCompare(input: string): string {
-  return process.platform === "win32" ? input.toLowerCase() : input;
 }
 
 function execJson<T>(command: string, args: string[], cwd: string): Promise<T> {
@@ -273,6 +230,155 @@ function execJson<T>(command: string, args: string[], cwd: string): Promise<T> {
         reject(parseError);
       }
     });
+  });
+}
+
+async function resolveCommandTemplate(
+  title: string,
+  template: string,
+  argumentsList: ArgumentDefinition[],
+  resolvers: Record<string, PlaceholderResolver> = {}
+): Promise<string | undefined> {
+  const placeholders = extractPlaceholders(template);
+  const values: Record<string, string> = {};
+
+  for (const name of placeholders) {
+    const argument = findArgument(argumentsList, name);
+    const resolver = resolvers[name];
+    if (resolver) {
+      const resolved = await resolver(argument);
+      if (resolved === undefined) {
+        return undefined;
+      }
+      values[name] = resolved;
+      continue;
+    }
+
+    const resolved = await promptGenericPlaceholder(title, name, argument?.defaultValue, argument?.choices);
+    if (resolved === undefined) {
+      return undefined;
+    }
+    values[name] = formatArgumentValue(argument, resolved);
+  }
+
+  return interpolate(template, values);
+}
+
+function extractPlaceholders(template: string): string[] {
+  const found = template.matchAll(/\$\{(\w+)\}/g);
+  const placeholders = new Set<string>();
+
+  for (const match of found) {
+    placeholders.add(match[1]);
+  }
+
+  return [...placeholders];
+}
+
+async function promptPeerCount(defaultValue: string | undefined): Promise<string | undefined> {
+  return vscode.window.showInputBox({
+    prompt: "Peers",
+    placeHolder: "0-100",
+    title: "ML-Torrent Run",
+    value: defaultValue,
+    validateInput: (value) => validatePeerCount(value)
+  });
+}
+
+async function selectBackend(
+  argument: ArgumentDefinition | undefined,
+  defaultValue: string | undefined
+): Promise<BackendSelection | undefined> {
+  const choices = argument?.choices?.filter(isBackendChoice) ?? ["none", "cpu", "gpu"];
+  const backendItems = prioritizeDefaultOption(
+    choices.map((choice) => ({
+      label: choice,
+      value: choice,
+      description: backendDescription(choice)
+    })),
+    defaultValue
+  ).map((item) => ({
+    ...item,
+    description: item.value === defaultValue
+      ? `${item.description} • default`
+      : item.description
+  }));
+
+  const backend = await vscode.window.showQuickPick(backendItems, {
+    placeHolder: defaultValue
+      ? `Select the backend mode (default: ${defaultValue})`
+      : "Select the backend mode",
+    title: "ML-Torrent Run"
+  });
+
+  if (!backend) {
+    return undefined;
+  }
+
+  return {
+    value: backend.value,
+    flag: backendFlagFor(backend.value)
+  };
+}
+
+async function selectUploadAction(defaultValue: string | undefined): Promise<UploadAction | undefined> {
+  const uploadItems = prioritizeDefaultOption(
+    [
+      { label: "install", value: "install" as const, description: "Build and install on a connected mobile device" },
+      { label: "upload", value: "upload" as const, description: "Build and publish an OTA release" }
+    ],
+    defaultValue
+  ).map((item) => ({
+    ...item,
+    description: item.value === defaultValue
+      ? `${item.description} • default`
+      : item.description
+  }));
+
+  return vscode.window.showQuickPick(uploadItems, {
+    placeHolder: defaultValue
+      ? `Select the upload action (default: ${defaultValue})`
+      : "Select the upload action",
+    title: "ML-Torrent Upload"
+  });
+}
+
+async function promptReleaseNotes(defaultValue: string | undefined): Promise<string | undefined> {
+  const releaseNotes = await vscode.window.showInputBox({
+    prompt: "Release notes",
+    title: "ML-Torrent Upload",
+    value: defaultValue,
+    validateInput: (value) => value.trim().length > 0 ? undefined : "Release notes are required."
+  });
+
+  return releaseNotes?.trim();
+}
+
+async function promptGenericPlaceholder(
+  title: string,
+  placeholder: string,
+  defaultValue: string | undefined,
+  choices: string[] | undefined
+): Promise<string | undefined> {
+  if (choices && choices.length > 0) {
+    const items = prioritizeDefaultValue(choices, defaultValue).map((choice) => ({
+      label: choice,
+      description: choice === defaultValue ? "default" : undefined
+    }));
+
+    const selected = await vscode.window.showQuickPick(items, {
+      title,
+      placeHolder: formatArgumentLabel(placeholder)
+    });
+
+    return selected?.label;
+  }
+
+  return vscode.window.showInputBox({
+    title,
+    prompt: formatArgumentLabel(placeholder),
+    placeHolder: formatArgumentLabel(placeholder),
+    value: defaultValue
   });
 }
 
@@ -321,8 +427,76 @@ function backendFlagFor(choice: BackendChoice): string {
   }
 }
 
+function backendChoiceFromFlag(flag: string | undefined): BackendChoice | undefined {
+  switch (flag) {
+    case "-t":
+      return "none";
+    case "--cpu":
+      return "cpu";
+    case "--gpu":
+      return "gpu";
+    default:
+      return undefined;
+  }
+}
+
+function backendDescription(choice: BackendChoice): string {
+  switch (choice) {
+    case "none":
+      return "Maps to -t for simulated training";
+    case "cpu":
+      return "Maps to --cpu";
+    case "gpu":
+      return "Maps to --gpu";
+  }
+}
+
+function isBackendChoice(value: string): value is BackendChoice {
+  return value === "none" || value === "cpu" || value === "gpu";
+}
+
+function formatBackendValue(
+  argument: ArgumentDefinition | undefined,
+  choice: BackendChoice
+): string {
+  if (choice === "none") {
+    return "-t";
+  }
+
+  return formatArgumentValue(argument, choice);
+}
+
 function interpolate(template: string, values: Record<string, string>): string {
   return template.replace(/\$\{(\w+)\}/g, (match, key: string) => values[key] ?? match);
+}
+
+function prioritizeDefaultValue(values: string[], defaultValue: string | undefined): string[] {
+  if (!defaultValue) {
+    return values;
+  }
+
+  const index = values.indexOf(defaultValue);
+  if (index === -1) {
+    return values;
+  }
+
+  return [values[index], ...values.slice(0, index), ...values.slice(index + 1)];
+}
+
+function prioritizeDefaultOption<T extends { value: string }>(
+  values: T[],
+  defaultValue: string | undefined
+): T[] {
+  if (!defaultValue) {
+    return values;
+  }
+
+  const index = values.findIndex((value) => value.value === defaultValue);
+  if (index === -1) {
+    return values;
+  }
+
+  return [values[index], ...values.slice(0, index), ...values.slice(index + 1)];
 }
 
 function shellEscape(value: string): string {
@@ -337,11 +511,62 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-type CargoMetadata = {
-  packages: Array<{
-    id: string;
-    name: string;
-    manifest_path: string;
-  }>;
-  workspace_members: string[];
+function normalizeArguments(values: ArgumentDefinition[]): ArgumentDefinition[] {
+  return values
+    .filter((value) => typeof value?.name === "string" && value.name.trim().length > 0)
+    .map((value) => ({
+      name: value.name.trim(),
+      prefix: value.prefix ?? "",
+      defaultValue: value.defaultValue ?? "",
+      choices: Array.isArray(value.choices)
+        ? value.choices.filter((choice): choice is string => typeof choice === "string")
+        : undefined
+    }));
+}
+
+function findArgument(values: ArgumentDefinition[], name: string): ArgumentDefinition | undefined {
+  return values.find((value) => value.name === name);
+}
+
+function formatArgumentValue(argument: ArgumentDefinition | undefined, rawValue: string): string {
+  const escapedValue = shellEscape(rawValue);
+  const prefix = argument?.prefix ?? "";
+
+  if (!prefix) {
+    return escapedValue;
+  }
+
+  if (prefix.endsWith("=")) {
+    return `${prefix}${escapedValue}`;
+  }
+
+  if (prefix === "-" || prefix === "--") {
+    return `${prefix}${rawValue}`;
+  }
+
+  return `${prefix} ${escapedValue}`;
+}
+
+function formatArgumentLabel(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ");
+}
+
+type PlaceholderResolver = (argument: ArgumentDefinition | undefined) => Promise<string | undefined>;
+
+type BackendSelection = {
+  value: BackendChoice;
+  flag: string;
+};
+
+type UploadAction = {
+  label: string;
+  value: "install" | "upload";
+  description: string;
+};
+
+type ArgumentDefinition = {
+  name: string;
+  prefix?: string;
+  defaultValue?: string;
+  choices?: string[];
 };
