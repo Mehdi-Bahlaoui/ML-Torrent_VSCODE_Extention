@@ -1,0 +1,76 @@
+{
+  "name": "ml-torrent-tools",
+  "displayName": "ML-Torrent Tools",
+  "description": "Status bar actions for checking, running, and uploading ML-Torrent workspaces.",
+  "version": "0.0.1",
+  "publisher": "mehdi",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.89.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:mlTorrent.check",
+    "onCommand:mlTorrent.run",
+    "onCommand:mlTorrent.upload"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mlTorrent.check",
+        "title": "ML-Torrent: Check"
+      },
+      {
+        "command": "mlTorrent.run",
+        "title": "ML-Torrent: Run"
+      },
+      {
+        "command": "mlTorrent.upload",
+        "title": "ML-Torrent: Upload"
+      }
+    ],
+    "configuration": {
+      "title": "ML-Torrent Tools",
+      "properties": {
+        "mlTorrent.projectRoot": {
+          "type": "string",
+          "default": "../dfl",
+          "description": "Path to the target project root. Relative paths are resolved from the open workspace folder."
+        },
+        "mlTorrent.checkCommandTemplate": {
+          "type": "string",
+          "default": "cargo check -p ${crate}",
+          "description": "Shell command template used by Check."
+        },
+        "mlTorrent.runCommandTemplate": {
+          "type": "string",
+          "default": "./run.sh ${peers} ${backendFlag}",
+          "description": "Shell command template used by Run."
+        },
+        "mlTorrent.uploadInstallCommandTemplate": {
+          "type": "string",
+          "default": "cd \"gui/ML-Torrent App\" && ./mobile-app.sh install",
+          "description": "Shell command template used by Upload when install is selected."
+        },
+        "mlTorrent.uploadReleaseCommandTemplate": {
+          "type": "string",
+          "default": "cd \"gui/ML-Torrent App\" && ./release.sh ${releaseNotes}",
+          "description": "Shell command template used by Upload when upload is selected."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/vscode": "^1.89.0",
+    "typescript": "^5.4.5"
+  }
+}
