@@ -87,12 +87,6 @@
               "name": "releaseNotes",
               "prefix": "",
               "defaultValue": "Test build"
-            },
-            {
-              "name": "uploadAction",
-              "prefix": "",
-              "defaultValue": "install",
-              "choices": ["install", "upload"]
             }
           ],
           "items": {

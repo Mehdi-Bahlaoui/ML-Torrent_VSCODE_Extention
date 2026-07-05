@@ -29,8 +29,7 @@ Because it executes configurable local commands and exposes project-specific rel
   "mlTorrent.arguments": [
     { "name": "peers", "prefix": "", "defaultValue": "2" },
     { "name": "backend", "prefix": "--", "defaultValue": "gpu", "choices": ["none", "cpu", "gpu"] },
-    { "name": "releaseNotes", "prefix": "", "defaultValue": "Test build" },
-    { "name": "uploadAction", "prefix": "", "defaultValue": "install", "choices": ["install", "upload"] }
+    { "name": "releaseNotes", "prefix": "", "defaultValue": "Test build" }
   ]
 }
 ```
@@ -56,6 +55,8 @@ Known variables still get nicer prompts:
 - `${peers}` validates `0-100`
 - `${backend}` opens the backend choice menu
 - `${releaseNotes}` opens the release notes input
+
+`Upload` keeps a built-in `install` / `upload` selector and is not configured through `mlTorrent.arguments`.
 
 Any other `${name}` placeholder is prompted automatically with its configured default value. If `choices` is set, it uses the same menu-style treatment as the built-in selectors.
 

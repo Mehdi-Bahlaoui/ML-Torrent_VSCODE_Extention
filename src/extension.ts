@@ -77,21 +77,13 @@ async function runUploadFlow(): Promise<void> {
     return;
   }
 
-  const uploadActionArgument =
-    findArgument(project.settings.arguments, "uploadAction")
-    ?? findArgument(project.settings.arguments, "uploadMode");
-  const action = await promptGenericPlaceholder(
-    "ML-Torrent Upload",
-    uploadActionArgument?.name ?? "uploadAction",
-    uploadActionArgument?.defaultValue,
-    uploadActionArgument?.choices
-  );
+  const action = await selectUploadAction();
 
   if (!action) {
     return;
   }
 
-  if (action === "install") {
+  if (action.value === "install") {
     const command = await resolveCommandTemplate(
       "ML-Torrent Upload",
       project.settings.uploadInstallCommandTemplate,
@@ -168,8 +160,7 @@ function readSettings(): Settings {
     arguments: normalizeArguments(config.get<ArgumentDefinition[]>("arguments", [
       { name: "peers", prefix: "", defaultValue: "2" },
       { name: "backend", prefix: "--", defaultValue: "gpu", choices: ["none", "cpu", "gpu"] },
-      { name: "releaseNotes", prefix: "", defaultValue: "Test build" },
-      { name: "uploadAction", prefix: "", defaultValue: "install", choices: ["install", "upload"] }
+      { name: "releaseNotes", prefix: "", defaultValue: "Test build" }
     ]))
   };
 }
@@ -242,6 +233,19 @@ async function promptPeerCount(defaultValue: string | undefined): Promise<string
     value: defaultValue,
     validateInput: (value) => validatePeerCount(value)
   });
+}
+
+async function selectUploadAction(): Promise<UploadAction | undefined> {
+  return vscode.window.showQuickPick(
+    [
+      { label: "install", value: "install" as const, description: "Build and install on a connected mobile device" },
+      { label: "upload", value: "upload" as const, description: "Build and publish an OTA release" }
+    ],
+    {
+      title: "ML-Torrent Upload",
+      placeHolder: "Select the upload action"
+    }
+  );
 }
 
 async function promptReleaseNotes(defaultValue: string | undefined): Promise<string | undefined> {
@@ -403,6 +407,12 @@ function formatArgumentLabel(name: string): string {
 }
 
 type PlaceholderResolver = (argument: ArgumentDefinition | undefined) => Promise<string | undefined>;
+
+type UploadAction = {
+  label: string;
+  value: "install" | "upload";
+  description: string;
+};
 
 type ArgumentDefinition = {
   name: string;
