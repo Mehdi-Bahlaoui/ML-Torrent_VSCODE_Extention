@@ -3,8 +3,6 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import { execFile } from "child_process";
 
-type BackendChoice = "none" | "cpu" | "gpu";
-
 type Settings = {
   projectRoot: string;
   runCommandTemplate: string;
@@ -80,34 +78,12 @@ async function runRunFlow(): Promise<void> {
     return;
   }
 
-  let backendSelection: BackendSelection | undefined;
-  const backendArgument = findArgument(project.settings.arguments, "backend");
-  const backendFlagArgument = findArgument(project.settings.arguments, "backendFlag");
-  const backendDefault =
-    backendArgument?.defaultValue
-    ?? backendChoiceFromFlag(backendFlagArgument?.defaultValue);
-  const getBackendSelection = async (): Promise<BackendSelection | undefined> => {
-    if (backendSelection) {
-      return backendSelection;
-    }
-    backendSelection = await selectBackend(backendArgument, backendDefault);
-    return backendSelection;
-  };
-
   const command = await resolveCommandTemplate(
     "ML-Torrent Run",
     project.settings.runCommandTemplate,
     project.settings.arguments,
     {
-      peers: async (argument) => promptPeerCount(argument?.defaultValue),
-      backend: async (argument) => {
-        const selection = await getBackendSelection();
-        if (!selection) {
-          return undefined;
-        }
-        return formatBackendValue(argument, selection.value);
-      },
-      backendFlag: async () => (await getBackendSelection())?.flag
+      peers: async (argument) => promptPeerCount(argument?.defaultValue)
     }
   );
   if (!command) {
@@ -285,42 +261,6 @@ async function promptPeerCount(defaultValue: string | undefined): Promise<string
   });
 }
 
-async function selectBackend(
-  argument: ArgumentDefinition | undefined,
-  defaultValue: string | undefined
-): Promise<BackendSelection | undefined> {
-  const choices = argument?.choices?.filter(isBackendChoice) ?? ["none", "cpu", "gpu"];
-  const backendItems = prioritizeDefaultOption(
-    choices.map((choice) => ({
-      label: choice,
-      value: choice,
-      description: backendDescription(choice)
-    })),
-    defaultValue
-  ).map((item) => ({
-    ...item,
-    description: item.value === defaultValue
-      ? `${item.description} • default`
-      : item.description
-  }));
-
-  const backend = await vscode.window.showQuickPick(backendItems, {
-    placeHolder: defaultValue
-      ? `Select the backend mode (default: ${defaultValue})`
-      : "Select the backend mode",
-    title: "ML-Torrent Run"
-  });
-
-  if (!backend) {
-    return undefined;
-  }
-
-  return {
-    value: backend.value,
-    flag: backendFlagFor(backend.value)
-  };
-}
-
 async function selectUploadAction(defaultValue: string | undefined): Promise<UploadAction | undefined> {
   const uploadItems = prioritizeDefaultOption(
     [
@@ -416,56 +356,6 @@ function validatePeerCount(value: string): string | undefined {
   return undefined;
 }
 
-function backendFlagFor(choice: BackendChoice): string {
-  switch (choice) {
-    case "none":
-      return "-t";
-    case "cpu":
-      return "--cpu";
-    case "gpu":
-      return "--gpu";
-  }
-}
-
-function backendChoiceFromFlag(flag: string | undefined): BackendChoice | undefined {
-  switch (flag) {
-    case "-t":
-      return "none";
-    case "--cpu":
-      return "cpu";
-    case "--gpu":
-      return "gpu";
-    default:
-      return undefined;
-  }
-}
-
-function backendDescription(choice: BackendChoice): string {
-  switch (choice) {
-    case "none":
-      return "Maps to -t for simulated training";
-    case "cpu":
-      return "Maps to --cpu";
-    case "gpu":
-      return "Maps to --gpu";
-  }
-}
-
-function isBackendChoice(value: string): value is BackendChoice {
-  return value === "none" || value === "cpu" || value === "gpu";
-}
-
-function formatBackendValue(
-  argument: ArgumentDefinition | undefined,
-  choice: BackendChoice
-): string {
-  if (choice === "none") {
-    return "-t";
-  }
-
-  return formatArgumentValue(argument, choice);
-}
-
 function interpolate(template: string, values: Record<string, string>): string {
   return template.replace(/\$\{(\w+)\}/g, (match, key: string) => values[key] ?? match);
 }
@@ -552,11 +442,6 @@ function formatArgumentLabel(name: string): string {
 }
 
 type PlaceholderResolver = (argument: ArgumentDefinition | undefined) => Promise<string | undefined>;
-
-type BackendSelection = {
-  value: BackendChoice;
-  flag: string;
-};
 
 type UploadAction = {
   label: string;
