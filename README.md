@@ -81,7 +81,6 @@ Then run:
 
 ```bash
 npm install
-npm run compile
+# Then, 1 command to compile, package and install:
+npm run compile && npx @vscode/vsce package && code --install-extension ml-torrent-tools-0.0.1.vsix --force
 ```
-
-Open the workspace in VS Code and launch the `Run Extension` debug configuration.
