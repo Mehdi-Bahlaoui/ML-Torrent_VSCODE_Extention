@@ -25,13 +25,27 @@
     "commands": [
       {
         "command": "mlTorrent.run",
-        "title": "ML-Torrent: Run"
+        "title": "ML-Torrent: Run",
+        "icon": "$(play)"
       },
       {
         "command": "mlTorrent.upload",
-        "title": "ML-Torrent: Upload"
+        "title": "ML-Torrent: Upload",
+        "icon": "$(cloud-upload)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mlTorrent.run",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mlTorrent.upload",
+          "group": "navigation@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "ML-Torrent Tools",
       "properties": {

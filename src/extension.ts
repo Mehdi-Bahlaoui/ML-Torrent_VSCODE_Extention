@@ -26,16 +26,6 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  const statusBarItems = [
-    createStatusBarItem("$(play) Run", "mlTorrent.run", 102),
-    createStatusBarItem("$(cloud-upload) Upload", "mlTorrent.upload", 101)
-  ];
-
-  for (const item of statusBarItems) {
-    context.subscriptions.push(item);
-    item.show();
-  }
-
   context.subscriptions.push({
     dispose: () => {
       extensionTerminal?.dispose();
@@ -58,18 +48,6 @@ function warnAboutLegacySettings(): void {
   void vscode.window.showWarningMessage(
     "ML-Torrent: `mlTorrent.variableDefaults` is deprecated and ignored. Keep defaults only in `mlTorrent.arguments`."
   );
-}
-
-function createStatusBarItem(
-  text: string,
-  command: string,
-  priority: number
-): vscode.StatusBarItem {
-  const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, priority);
-  item.text = text;
-  item.command = command;
-  item.name = `ML-Torrent ${text}`;
-  return item;
 }
 
 async function runRunFlow(): Promise<void> {
@@ -99,16 +77,21 @@ async function runUploadFlow(): Promise<void> {
     return;
   }
 
-  const action = await selectUploadAction(
-    findArgument(project.settings.arguments, "uploadAction")?.defaultValue
-    ?? findArgument(project.settings.arguments, "uploadMode")?.defaultValue
+  const uploadActionArgument =
+    findArgument(project.settings.arguments, "uploadAction")
+    ?? findArgument(project.settings.arguments, "uploadMode");
+  const action = await promptGenericPlaceholder(
+    "ML-Torrent Upload",
+    uploadActionArgument?.name ?? "uploadAction",
+    uploadActionArgument?.defaultValue,
+    uploadActionArgument?.choices
   );
 
   if (!action) {
     return;
   }
 
-  if (action.value === "install") {
+  if (action === "install") {
     const command = await resolveCommandTemplate(
       "ML-Torrent Upload",
       project.settings.uploadInstallCommandTemplate,
@@ -258,28 +241,6 @@ async function promptPeerCount(defaultValue: string | undefined): Promise<string
     title: "ML-Torrent Run",
     value: defaultValue,
     validateInput: (value) => validatePeerCount(value)
-  });
-}
-
-async function selectUploadAction(defaultValue: string | undefined): Promise<UploadAction | undefined> {
-  const uploadItems = prioritizeDefaultOption(
-    [
-      { label: "install", value: "install" as const, description: "Build and install on a connected mobile device" },
-      { label: "upload", value: "upload" as const, description: "Build and publish an OTA release" }
-    ],
-    defaultValue
-  ).map((item) => ({
-    ...item,
-    description: item.value === defaultValue
-      ? `${item.description} • default`
-      : item.description
-  }));
-
-  return vscode.window.showQuickPick(uploadItems, {
-    placeHolder: defaultValue
-      ? `Select the upload action (default: ${defaultValue})`
-      : "Select the upload action",
-    title: "ML-Torrent Upload"
   });
 }
 
@@ -442,12 +403,6 @@ function formatArgumentLabel(name: string): string {
 }
 
 type PlaceholderResolver = (argument: ArgumentDefinition | undefined) => Promise<string | undefined>;
-
-type UploadAction = {
-  label: string;
-  value: "install" | "upload";
-  description: string;
-};
 
 type ArgumentDefinition = {
   name: string;

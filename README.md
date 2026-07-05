@@ -1,6 +1,6 @@
 # ML-Torrent Tools
 
-VS Code extension that adds `Run` and `Upload` status bar actions for an ML-Torrent-style workspace.
+VS Code extension that adds `Run` and `Upload` actions to the editor title area for an ML-Torrent-style workspace.
 
 ## Why This Is Not On The Marketplace
 
@@ -15,6 +15,7 @@ Because it executes configurable local commands and exposes project-specific rel
 
 - `Run` prompts for peer count and backend mode, then runs the configured launch command.
 - `Upload` prompts for either install or upload, and requests release notes for upload.
+- Actions are contributed to the editor title area, which is the closest supported top-chrome placement for custom extension commands.
 - Commands run in a reusable integrated terminal named `ML-Torrent` so the process stays available in the terminal panel.
 
 ## Default configuration
